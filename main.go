@@ -21,16 +21,28 @@
 // The -v flag causes goversion to print information about every
 // file it considers.
 //
+// Example
+//
+// Scan /usr/bin for Go binaries and print their versions:
+//
+//	$ goversion /usr/bin
+//	/usr/bin/containerd go1.7.4
+//	/usr/bin/containerd-shim go1.7.4
+//	/usr/bin/ctr go1.7.4
+//	/usr/bin/docker go1.7.4
+//	/usr/bin/docker-proxy go1.7.4
+//	/usr/bin/dockerd go1.7.4
+//	/usr/bin/kbfsfuse go1.8.3
+//	/usr/bin/kbnm go1.8.3
+//	/usr/bin/keybase go1.8.3
+//	/usr/bin/snap go1.7.4
+//	/usr/bin/snapctl go1.7.4
+//
 package main // import "rsc.io/goversion"
 
 import (
 	"archive/tar"
-	"bytes"
 	"compress/gzip"
-	"debug/elf"
-	"debug/macho"
-	"debug/pe"
-	"encoding/binary"
 	"flag"
 	"fmt"
 	"io"
@@ -127,13 +139,10 @@ func scanfile(file, diskFile string, info os.FileInfo, mustPrint bool) {
 		return
 	}
 	defer f.Close()
-	syms, err := f.Symbols()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: reading symbols: %v\n", file, err)
-		return
-	}
+	syms, symsErr := f.Symbols()
 	var (
 		isGo           = false
+		isGccgo        = false
 		buildVersion   = ""
 		boringCrypto   = false
 		standardCrypto = false
@@ -148,7 +157,11 @@ func scanfile(file, diskFile string, info os.FileInfo, mustPrint bool) {
 		if name == "runtime.main" || name == "main.main" {
 			isGo = true
 		}
+		if strings.HasPrefix(name, "runtime.") && strings.HasSuffix(name, "$descriptor") {
+			isGccgo = true
+		}
 		if name == "runtime.buildVersion" {
+			isGo = true
 			v, err := readBuildVersion(f, sym.Addr, sym.Size)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "%s: %v\n", file, err)
@@ -164,6 +177,27 @@ func scanfile(file, diskFile string, info os.FileInfo, mustPrint bool) {
 				standardCrypto = true
 			}
 		}
+	}
+
+	if *debugMatch {
+		buildVersion = ""
+	}
+	if buildVersion == "" {
+		g, v := readBuildVersionX86Asm(f)
+		if g {
+			isGo = true
+			buildVersion = v
+		}
+	}
+	if isGccgo && buildVersion == "" {
+		isGo = true
+		buildVersion = "gccgo (version unknown)"
+	}
+	if !isGo && symsErr != nil {
+		if mustPrint {
+			fmt.Fprintf(os.Stderr, "%s: reading symbols: %v\n", file, symsErr)
+		}
+		return
 	}
 
 	if !isGo {
@@ -278,222 +312,4 @@ func readBuildVersion(f Exe, addr, size uint64) (string, error) {
 		return "", fmt.Errorf("reading runtime.buildVersion string data: %v", err)
 	}
 	return string(data), nil
-}
-
-type Sym struct {
-	Name string
-	Addr uint64
-	Size uint64
-}
-
-type Exe interface {
-	AddrSize() int // bytes
-	ReadData(addr, size uint64) ([]byte, error)
-	Symbols() ([]Sym, error)
-	SectionNames() []string
-	Close() error
-	ByteOrder() binary.ByteOrder
-}
-
-func openExe(file string) (Exe, error) {
-	f, err := os.Open(file)
-	if err != nil {
-		return nil, err
-	}
-	data := make([]byte, 16)
-	if _, err := io.ReadFull(f, data); err != nil {
-		return nil, err
-	}
-	f.Seek(0, 0)
-	if bytes.HasPrefix(data, []byte("\x7FELF")) {
-		e, err := elf.NewFile(f)
-		if err != nil {
-			f.Close()
-			return nil, err
-		}
-		return &elfExe{f, e}, nil
-	}
-	if bytes.HasPrefix(data, []byte("MZ")) {
-		e, err := pe.NewFile(f)
-		if err != nil {
-			f.Close()
-			return nil, err
-		}
-		return &peExe{f, e}, nil
-	}
-	if bytes.HasPrefix(data, []byte("\xFE\xED\xFA")) || bytes.HasPrefix(data[1:], []byte("\xFA\xED\xFE")) {
-		e, err := macho.NewFile(f)
-		if err != nil {
-			f.Close()
-			return nil, err
-		}
-		return &machoExe{f, e}, nil
-	}
-	return nil, fmt.Errorf("unrecognized executable format")
-}
-
-type elfExe struct {
-	os *os.File
-	f  *elf.File
-}
-
-func (x *elfExe) AddrSize() int { return 0 }
-
-func (x *elfExe) ByteOrder() binary.ByteOrder { return x.f.ByteOrder }
-
-func (x *elfExe) Close() error {
-	return x.os.Close()
-}
-
-func (x *elfExe) ReadData(addr, size uint64) ([]byte, error) {
-	data := make([]byte, size)
-	for _, prog := range x.f.Progs {
-		if prog.Vaddr <= addr && addr+size-1 <= prog.Vaddr+prog.Filesz-1 {
-			_, err := prog.ReadAt(data, int64(addr-prog.Vaddr))
-			if err != nil {
-				return nil, err
-			}
-			return data, nil
-		}
-	}
-	return nil, fmt.Errorf("address not mapped")
-}
-
-func (x *elfExe) Symbols() ([]Sym, error) {
-	syms, err := x.f.Symbols()
-	if err != nil {
-		return nil, err
-	}
-	var out []Sym
-	for _, sym := range syms {
-		out = append(out, Sym{sym.Name, sym.Value, sym.Size})
-	}
-	return out, nil
-}
-
-func (x *elfExe) SectionNames() []string {
-	var names []string
-	for _, sect := range x.f.Sections {
-		names = append(names, sect.Name)
-	}
-	return names
-}
-
-type peExe struct {
-	os *os.File
-	f  *pe.File
-}
-
-func (x *peExe) imageBase() uint64 {
-	switch oh := x.f.OptionalHeader.(type) {
-	case *pe.OptionalHeader32:
-		return uint64(oh.ImageBase)
-	case *pe.OptionalHeader64:
-		return oh.ImageBase
-	}
-	return 0
-}
-
-func (x *peExe) AddrSize() int {
-	if x.f.Machine == pe.IMAGE_FILE_MACHINE_AMD64 {
-		return 8
-	}
-	return 4
-}
-
-func (x *peExe) ByteOrder() binary.ByteOrder { return binary.LittleEndian }
-
-func (x *peExe) Close() error {
-	return x.os.Close()
-}
-
-func (x *peExe) ReadData(addr, size uint64) ([]byte, error) {
-	addr -= x.imageBase()
-	data := make([]byte, size)
-	for _, sect := range x.f.Sections {
-		if uint64(sect.VirtualAddress) <= addr && addr+size-1 <= uint64(sect.VirtualAddress+sect.Size-1) {
-			_, err := sect.ReadAt(data, int64(addr-uint64(sect.VirtualAddress)))
-			if err != nil {
-				return nil, err
-			}
-			return data, nil
-		}
-	}
-	return nil, fmt.Errorf("address not mapped")
-}
-
-func (x *peExe) Symbols() ([]Sym, error) {
-	base := x.imageBase()
-	var out []Sym
-	for _, sym := range x.f.Symbols {
-		if sym.SectionNumber <= 0 || int(sym.SectionNumber) > len(x.f.Sections) {
-			continue
-		}
-		sect := x.f.Sections[sym.SectionNumber-1]
-		out = append(out, Sym{sym.Name, uint64(sym.Value) + base + uint64(sect.VirtualAddress), 0})
-	}
-	return out, nil
-}
-
-func (x *peExe) SectionNames() []string {
-	var names []string
-	for _, sect := range x.f.Sections {
-		names = append(names, sect.Name)
-	}
-	return names
-}
-
-type machoExe struct {
-	os *os.File
-	f  *macho.File
-}
-
-func (x *machoExe) AddrSize() int {
-	if x.f.Cpu&0x01000000 != 0 {
-		return 8
-	}
-	return 4
-}
-
-func (x *machoExe) ByteOrder() binary.ByteOrder { return x.f.ByteOrder }
-
-func (x *machoExe) Close() error {
-	return x.os.Close()
-}
-
-func (x *machoExe) ReadData(addr, size uint64) ([]byte, error) {
-	data := make([]byte, size)
-	for _, load := range x.f.Loads {
-		seg, ok := load.(*macho.Segment)
-		if !ok {
-			continue
-		}
-		if seg.Addr <= addr && addr+size-1 <= seg.Addr+seg.Filesz-1 {
-			if seg.Name == "__PAGEZERO" {
-				continue
-			}
-			_, err := seg.ReadAt(data, int64(addr-seg.Addr))
-			if err != nil {
-				return nil, err
-			}
-			return data, nil
-		}
-	}
-	return nil, fmt.Errorf("address not mapped")
-}
-
-func (x *machoExe) Symbols() ([]Sym, error) {
-	var out []Sym
-	for _, sym := range x.f.Symtab.Syms {
-		out = append(out, Sym{sym.Name, sym.Value, 0})
-	}
-	return out, nil
-}
-
-func (x *machoExe) SectionNames() []string {
-	var names []string
-	for _, sect := range x.f.Sections {
-		names = append(names, sect.Name)
-	}
-	return names
 }
