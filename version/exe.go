@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package main
+package version
 
 import (
 	"bytes"
@@ -15,23 +15,23 @@ import (
 	"os"
 )
 
-type Sym struct {
+type sym struct {
 	Name string
 	Addr uint64
 	Size uint64
 }
 
-type Exe interface {
+type exe interface {
 	AddrSize() int // bytes
 	ReadData(addr, size uint64) ([]byte, error)
-	Symbols() ([]Sym, error)
+	Symbols() ([]sym, error)
 	SectionNames() []string
 	Close() error
 	ByteOrder() binary.ByteOrder
 	Entry() uint64
 }
 
-func openExe(file string) (Exe, error) {
+func openExe(file string) (exe, error) {
 	f, err := os.Open(file)
 	if err != nil {
 		return nil, err
@@ -97,14 +97,14 @@ func (x *elfExe) ReadData(addr, size uint64) ([]byte, error) {
 	return nil, fmt.Errorf("address not mapped")
 }
 
-func (x *elfExe) Symbols() ([]Sym, error) {
+func (x *elfExe) Symbols() ([]sym, error) {
 	syms, err := x.f.Symbols()
 	if err != nil {
 		return nil, err
 	}
-	var out []Sym
-	for _, sym := range syms {
-		out = append(out, Sym{sym.Name, sym.Value, sym.Size})
+	var out []sym
+	for _, s := range syms {
+		out = append(out, sym{s.Name, s.Value, s.Size})
 	}
 	return out, nil
 }
@@ -170,15 +170,15 @@ func (x *peExe) ReadData(addr, size uint64) ([]byte, error) {
 	return nil, fmt.Errorf("address not mapped")
 }
 
-func (x *peExe) Symbols() ([]Sym, error) {
+func (x *peExe) Symbols() ([]sym, error) {
 	base := x.imageBase()
-	var out []Sym
-	for _, sym := range x.f.Symbols {
-		if sym.SectionNumber <= 0 || int(sym.SectionNumber) > len(x.f.Sections) {
+	var out []sym
+	for _, s := range x.f.Symbols {
+		if s.SectionNumber <= 0 || int(s.SectionNumber) > len(x.f.Sections) {
 			continue
 		}
-		sect := x.f.Sections[sym.SectionNumber-1]
-		out = append(out, Sym{sym.Name, uint64(sym.Value) + base + uint64(sect.VirtualAddress), 0})
+		sect := x.f.Sections[s.SectionNumber-1]
+		out = append(out, sym{s.Name, uint64(s.Value) + base + uint64(sect.VirtualAddress), 0})
 	}
 	return out, nil
 }
@@ -234,10 +234,10 @@ func (x *machoExe) ReadData(addr, size uint64) ([]byte, error) {
 	return nil, fmt.Errorf("address not mapped")
 }
 
-func (x *machoExe) Symbols() ([]Sym, error) {
-	var out []Sym
-	for _, sym := range x.f.Symtab.Syms {
-		out = append(out, Sym{sym.Name, sym.Value, 0})
+func (x *machoExe) Symbols() ([]sym, error) {
+	var out []sym
+	for _, s := range x.f.Symtab.Syms {
+		out = append(out, sym{s.Name, s.Value, 0})
 	}
 	return out, nil
 }

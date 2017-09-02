@@ -51,6 +51,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"rsc.io/goversion/version"
 )
 
 var (
@@ -131,96 +133,32 @@ func scanfile(file, diskFile string, info os.FileInfo, mustPrint bool) {
 		}
 		return
 	}
-	f, err := openExe(diskFile)
+	v, err := version.ReadExe(diskFile)
 	if err != nil {
 		if mustPrint {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", file, err)
 		}
 		return
 	}
-	defer f.Close()
-	syms, symsErr := f.Symbols()
-	var (
-		isGo           = false
-		isGccgo        = false
-		buildVersion   = ""
-		boringCrypto   = false
-		standardCrypto = false
-	)
-	for _, name := range f.SectionNames() {
-		if name == ".note.go.buildid" {
-			isGo = true
-		}
-	}
-	for _, sym := range syms {
-		name := sym.Name
-		if name == "runtime.main" || name == "main.main" {
-			isGo = true
-		}
-		if strings.HasPrefix(name, "runtime.") && strings.HasSuffix(name, "$descriptor") {
-			isGccgo = true
-		}
-		if name == "runtime.buildVersion" {
-			isGo = true
-			v, err := readBuildVersion(f, sym.Addr, sym.Size)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "%s: %v\n", file, err)
-				return
-			}
-			buildVersion = v
-		}
-		if strings.Contains(name, "_Cfunc__goboringcrypto_") {
-			boringCrypto = true
-		}
-		for _, s := range standardCryptoNames {
-			if strings.Contains(name, s) {
-				standardCrypto = true
-			}
-		}
-	}
 
-	if *debugMatch {
-		buildVersion = ""
-	}
-	if buildVersion == "" {
-		g, v := readBuildVersionX86Asm(f)
-		if g {
-			isGo = true
-			buildVersion = v
-		}
-	}
-	if isGccgo && buildVersion == "" {
-		isGo = true
-		buildVersion = "gccgo (version unknown)"
-	}
-	if !isGo && symsErr != nil {
-		if mustPrint {
-			fmt.Fprintf(os.Stderr, "%s: reading symbols: %v\n", file, symsErr)
-		}
-		return
-	}
-
-	if !isGo {
-		if mustPrint {
-			fmt.Fprintf(os.Stderr, "%s: not a Go executable\n", file)
-		}
-		return
-	}
-	if buildVersion == "" {
-		buildVersion = "unknown Go version"
-	}
+	buildVersion := v.Release
 	if *crypto {
 		switch {
-		case boringCrypto && standardCrypto:
+		case v.BoringCrypto && v.StandardCrypto:
 			buildVersion += " (boring AND standard crypto!!!)"
-		case boringCrypto:
+		case v.BoringCrypto:
 			buildVersion += " (boring crypto)"
-		case standardCrypto:
+		case v.StandardCrypto:
 			buildVersion += " (standard crypto)"
 		}
 	}
-
 	fmt.Printf("%s %s\n", file, buildVersion)
+}
+
+type Version struct {
+	Release        string
+	BoringCrypto   bool
+	StandardCrypto bool
 }
 
 func scantar(file string, info os.FileInfo) {
@@ -274,42 +212,4 @@ func scantar(file string, info os.FileInfo) {
 		scanfile(file+"/"+hdr.Name, tmpName, info, *verbose)
 		os.Remove(tmpName)
 	}
-}
-
-var standardCryptoNames = []string{
-	"crypto/sha1.(*digest)",
-	"crypto/sha256.(*digest)",
-	"crypto/rand.(*devReader)",
-	"crypto/rsa.encrypt",
-	"crypto/rsa.decrypt",
-}
-
-func readBuildVersion(f Exe, addr, size uint64) (string, error) {
-	if size == 0 {
-		size = uint64(f.AddrSize() * 2)
-	}
-	if size != 8 && size != 16 {
-		return "", fmt.Errorf("invalid size for runtime.buildVersion")
-	}
-	data, err := f.ReadData(addr, size)
-	if err != nil {
-		return "", fmt.Errorf("reading runtime.buildVersion: %v", err)
-	}
-
-	if size == 8 {
-		addr = uint64(f.ByteOrder().Uint32(data))
-		size = uint64(f.ByteOrder().Uint32(data[4:]))
-	} else {
-		addr = f.ByteOrder().Uint64(data)
-		size = f.ByteOrder().Uint64(data[8:])
-	}
-	if size > 1000 {
-		return "", fmt.Errorf("implausible string size %d for runtime.buildVersion", size)
-	}
-
-	data, err = f.ReadData(addr, size)
-	if err != nil {
-		return "", fmt.Errorf("reading runtime.buildVersion string data: %v", err)
-	}
-	return string(data), nil
 }

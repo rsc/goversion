@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package main
+package version
 
 import (
 	"encoding/binary"
@@ -206,7 +206,7 @@ var amd64Matcher = matcher{
 
 var debugMatch = flag.Bool("d", false, "print debug information")
 
-func (m matcher) match(f Exe, addr uint64) (uint64, bool) {
+func (m matcher) match(f exe, addr uint64) (uint64, bool) {
 	data, err := f.ReadData(addr, 512)
 	if err != nil {
 		return 0, false
@@ -277,7 +277,7 @@ Matchers:
 	return 0, false
 }
 
-func readBuildVersionX86Asm(f Exe) (isGo bool, buildVersion string) {
+func readBuildVersionX86Asm(f exe) (isGo bool, buildVersion string) {
 	entry := f.Entry()
 	if entry == 0 {
 		return
