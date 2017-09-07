@@ -91,7 +91,7 @@ func main() {
 
 func scandir(dir string) {
 	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if info.Mode().IsRegular() {
+		if info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 			scanfile(path, path, info, *verbose)
 		}
 		return nil
@@ -122,10 +122,15 @@ func scanfile(file, diskFile string, info os.FileInfo, mustPrint bool) {
 		return
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		if mustPrint {
-			fmt.Fprintf(os.Stderr, "%s: symlink\n", file)
+		// Accept file symlinks, but not dir symlinks, to avoid cycles.
+		i, err := os.Stat(diskFile)
+		if err != nil || !i.Mode().IsRegular() {
+			if mustPrint {
+				fmt.Fprintf(os.Stderr, "%s: symlink\n", file)
+			}
+			return
 		}
-		return
+		info = i
 	}
 	if file == diskFile && info.Mode()&0111 == 0 {
 		if mustPrint {
