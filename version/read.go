@@ -8,6 +8,7 @@ package version
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -55,8 +56,8 @@ func ReadExe(file string) (Version, error) {
 		if strings.Contains(name, "_Cfunc__goboringcrypto_") {
 			v.BoringCrypto = true
 		}
-		for _, s := range standardCryptoNames {
-			if strings.Contains(name, s) {
+		for _, re := range standardCryptoNames {
+			if re.MatchString(name) {
 				v.StandardCrypto = true
 			}
 		}
@@ -89,12 +90,14 @@ func ReadExe(file string) (Version, error) {
 	return v, nil
 }
 
-var standardCryptoNames = []string{
-	"crypto/sha1.(*digest)",
-	"crypto/sha256.(*digest)",
-	"crypto/rand.(*devReader)",
-	"crypto/rsa.encrypt",
-	"crypto/rsa.decrypt",
+var re = regexp.MustCompile
+
+var standardCryptoNames = []*regexp.Regexp{
+	re(`^crypto/sha1\.\(\*digest\)`),
+	re(`^crypto/sha256\.\(\*digest\)`),
+	re(`^crypto/rand\.\(\*devReader\)`),
+	re(`^crypto/rsa\.encrypt$`),
+	re(`^crypto/rsa\.decrypt$`),
 }
 
 func readBuildVersion(f exe, addr, size uint64) (string, error) {
