@@ -6,6 +6,8 @@
 package version
 
 import (
+	"bytes"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
@@ -17,6 +19,7 @@ type Version struct {
 	Release        string // Go version (runtime.Version in the program)
 	BoringCrypto   bool   // program uses BoringCrypto
 	StandardCrypto bool   // program uses standard crypto (replaced by BoringCrypto)
+	FIPSOnly       bool   // program imports "crypto/tls/fipsonly"
 }
 
 // ReadExe reports information about the Go version used to build
@@ -53,13 +56,19 @@ func ReadExe(file string) (Version, error) {
 			v.Release = release
 
 		}
-		if strings.Contains(name, "_Cfunc__goboringcrypto_") {
+		if strings.Contains(name, "_Cfunc__goboringcrypto_") || name == "crypto/internal/boring/sig.BoringCrypto" {
 			v.BoringCrypto = true
+		}
+		if name == "crypto/internal/boring/sig.FIPSOnly" {
+			v.FIPSOnly = true
 		}
 		for _, re := range standardCryptoNames {
 			if re.MatchString(name) {
 				v.StandardCrypto = true
 			}
+		}
+		if name == "crypto/internal/boring/sig.StandardCrypto" {
+			v.StandardCrypto = true
 		}
 	}
 
@@ -71,6 +80,9 @@ func ReadExe(file string) (Version, error) {
 		if g {
 			isGo = true
 			v.Release = release
+			if err := findCryptoSigs(&v, f); err != nil {
+				return v, err
+			}
 		}
 	}
 	if isGccgo && v.Release == "" {
@@ -128,4 +140,55 @@ func readBuildVersion(f exe, addr, size uint64) (string, error) {
 		return "", fmt.Errorf("reading runtime.buildVersion string data: %v", err)
 	}
 	return string(data), nil
+}
+
+// Code signatures that indicate BoringCrypto or crypto/internal/fipsonly.
+// These are not byte literals in order to avoid the actual
+// byte signatures appearing in the goversion binary,
+// because on some systems you can't tell rodata from text.
+var (
+	sigBoringCrypto, _   = hex.DecodeString("EB1DF448F44BF4B332F52813A3B450D441CC2485F001454E92101B1D2F1950C3")
+	sigStandardCrypto, _ = hex.DecodeString("EB1DF448F44BF4BAEE4DFA9851CA56A91145E83E99C59CF911CB8E80DAF12FC3")
+	sigFIPSOnly, _       = hex.DecodeString("EB1DF448F44BF4363CB9CE9D68047D31F28D325D5CA5873F5D80CAF6D6151BC3")
+)
+
+func findCryptoSigs(v *Version, f exe) error {
+	start, end := f.TextRange()
+	for addr := start; addr < end; {
+		size := uint64(1 << 20)
+		if end-addr < size {
+			size = end - addr
+		}
+		data, err := f.ReadData(addr, size)
+		if err != nil {
+			return fmt.Errorf("reading text: %v", err)
+		}
+		if haveSig(data, sigBoringCrypto) {
+			v.BoringCrypto = true
+		}
+		if haveSig(data, sigFIPSOnly) {
+			v.FIPSOnly = true
+		}
+		if haveSig(data, sigStandardCrypto) {
+			v.StandardCrypto = true
+		}
+		addr += size
+	}
+	return nil
+}
+
+func haveSig(data, sig []byte) bool {
+	const align = 16
+	for {
+		i := bytes.Index(data, sig)
+		if i < 0 {
+			return false
+		}
+		if i&(align-1) == 0 {
+			return true
+		}
+		// Found unaligned match; unexpected but
+		// skip to next aligned boundary and keep searching.
+		data = data[(i+align-1)&^(align-1):]
+	}
 }

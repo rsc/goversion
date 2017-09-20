@@ -156,6 +156,9 @@ func scanfile(file, diskFile string, info os.FileInfo, mustPrint bool) {
 		case v.StandardCrypto:
 			buildVersion += " (standard crypto)"
 		}
+		if v.FIPSOnly {
+			buildVersion += " +crypto/tls/fipsonly"
+		}
 	}
 	fmt.Printf("%s %s\n", file, buildVersion)
 }
