@@ -18,6 +18,12 @@
 // The -crypto flag causes goversion to print additional information
 // about the crypto libraries linked into each executable.
 //
+// The -m flag causes goversion to print the list of modules
+// found in the executable, along with version information.
+//
+// The -mh flag causes goversion to print the list of modules
+// found in the executable, along with version and hash information.
+//
 // The -v flag causes goversion to print information about every
 // file it considers.
 //
