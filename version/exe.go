@@ -30,6 +30,7 @@ type exe interface {
 	ByteOrder() binary.ByteOrder
 	Entry() uint64
 	TextRange() (uint64, uint64)
+	RODataRange() (uint64, uint64)
 }
 
 func openExe(file string) (exe, error) {
@@ -127,6 +128,20 @@ func (x *elfExe) TextRange() (uint64, uint64) {
 	return 0, 0
 }
 
+func (x *elfExe) RODataRange() (uint64, uint64) {
+	for _, p := range x.f.Progs {
+		if p.Type == elf.PT_LOAD && p.Flags&(elf.PF_R|elf.PF_W|elf.PF_X) == elf.PF_R {
+			return p.Vaddr, p.Vaddr + p.Filesz
+		}
+	}
+	for _, p := range x.f.Progs {
+		if p.Type == elf.PT_LOAD && p.Flags&(elf.PF_R|elf.PF_W|elf.PF_X) == (elf.PF_R|elf.PF_X) {
+			return p.Vaddr, p.Vaddr + p.Filesz
+		}
+	}
+	return 0, 0
+}
+
 type peExe struct {
 	os *os.File
 	f  *pe.File
@@ -205,10 +220,14 @@ func (x *peExe) TextRange() (uint64, uint64) {
 	// Assume text is first non-empty section.
 	for _, sect := range x.f.Sections {
 		if sect.VirtualAddress != 0 && sect.Size != 0 {
-			return uint64(sect.VirtualAddress), uint64(sect.VirtualAddress + sect.Size)
+			return uint64(sect.VirtualAddress) + x.imageBase(), uint64(sect.VirtualAddress+sect.Size) + x.imageBase()
 		}
 	}
 	return 0, 0
+}
+
+func (x *peExe) RODataRange() (uint64, uint64) {
+	return x.TextRange()
 }
 
 type machoExe struct {
@@ -275,9 +294,12 @@ func (x *machoExe) TextRange() (uint64, uint64) {
 	for _, load := range x.f.Loads {
 		seg, ok := load.(*macho.Segment)
 		if ok && seg.Name != "__PAGEZERO" && seg.Addr != 0 && seg.Filesz != 0 {
-			continue
+			return seg.Addr, seg.Addr + seg.Filesz
 		}
-		return seg.Addr, seg.Addr + seg.Filesz
 	}
 	return 0, 0
+}
+
+func (x *machoExe) RODataRange() (uint64, uint64) {
+	return x.TextRange()
 }

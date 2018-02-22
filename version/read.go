@@ -17,6 +17,7 @@ import (
 // Version is the information reported by ReadExe.
 type Version struct {
 	Release        string // Go version (runtime.Version in the program)
+	ModuleInfo     string // program's module information
 	BoringCrypto   bool   // program uses BoringCrypto
 	StandardCrypto bool   // program uses standard crypto (replaced by BoringCrypto)
 	FIPSOnly       bool   // program imports "crypto/tls/fipsonly"
@@ -74,6 +75,9 @@ func ReadExe(file string) (Version, error) {
 
 	if *debugMatch {
 		v.Release = ""
+	}
+	if err := findModuleInfo(&v, f); err != nil {
+		return v, err
 	}
 	if v.Release == "" {
 		g, release := readBuildVersionX86Asm(f)
@@ -153,6 +157,7 @@ var (
 )
 
 func findCryptoSigs(v *Version, f exe) error {
+	const maxSigLen = 1 << 10
 	start, end := f.TextRange()
 	for addr := start; addr < end; {
 		size := uint64(1 << 20)
@@ -171,6 +176,9 @@ func findCryptoSigs(v *Version, f exe) error {
 		}
 		if haveSig(data, sigStandardCrypto) {
 			v.StandardCrypto = true
+		}
+		if addr+size < end {
+			size -= maxSigLen
 		}
 		addr += size
 	}
@@ -191,4 +199,45 @@ func haveSig(data, sig []byte) bool {
 		// skip to next aligned boundary and keep searching.
 		data = data[(i+align-1)&^(align-1):]
 	}
+}
+
+func findModuleInfo(v *Version, f exe) error {
+	const maxModInfo = 128 << 10
+	start, end := f.RODataRange()
+	for addr := start; addr < end; {
+		size := uint64(4 << 20)
+		if end-addr < size {
+			size = end - addr
+		}
+		data, err := f.ReadData(addr, size)
+		if err != nil {
+			return fmt.Errorf("reading text: %v", err)
+		}
+		if haveModuleInfo(data, v) {
+			return nil
+		}
+		if addr+size < end {
+			size -= maxModInfo
+		}
+		addr += size
+	}
+	return nil
+}
+
+var (
+	infoStart, _ = hex.DecodeString("3077af0c9274080241e1c107e6d618e6")
+	infoEnd, _   = hex.DecodeString("f932433186182072008242104116d8f2")
+)
+
+func haveModuleInfo(data []byte, v *Version) bool {
+	i := bytes.Index(data, infoStart)
+	if i < 0 {
+		return false
+	}
+	j := bytes.Index(data[i:], infoEnd)
+	if j < 0 {
+		return false
+	}
+	v.ModuleInfo = string(data[i+len(infoStart) : i+j])
+	return true
 }

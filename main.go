@@ -7,7 +7,7 @@
 //
 // Usage:
 //
-//	goversion [-crypto] [-v] path...
+//	goversion [-crypto] [-m | -mh] [-v] path...
 //
 // The list of paths can be individual files or directories; if the latter,
 // goversion scans all files in the directory tree, not following symlinks.
@@ -42,6 +42,7 @@ package main // import "rsc.io/goversion"
 
 import (
 	"archive/tar"
+	"bufio"
 	"compress/gzip"
 	"flag"
 	"fmt"
@@ -51,12 +52,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"rsc.io/goversion/version"
 )
 
 var (
 	crypto  = flag.Bool("crypto", false, "check kind of crypto library")
+	modinfo = flag.Bool("m", false, "show module info")
+	modhash = flag.Bool("mh", false, "show module and hash info")
 	verbose = flag.Bool("v", false, "print verbose information")
 )
 
@@ -161,6 +165,17 @@ func scanfile(file, diskFile string, info os.FileInfo, mustPrint bool) {
 		}
 	}
 	fmt.Printf("%s %s\n", file, buildVersion)
+	if (*modinfo || *modhash) && v.ModuleInfo != "" {
+		var rows [][]string
+		for _, line := range strings.Split(strings.TrimSpace(v.ModuleInfo), "\n") {
+			row := strings.Split(line, "\t")
+			if !*modhash && len(row) > 3 {
+				row = row[:3]
+			}
+			rows = append(rows, row)
+		}
+		printTable(os.Stdout, "\t", rows)
+	}
 }
 
 type Version struct {
@@ -220,4 +235,36 @@ func scantar(file string, info os.FileInfo) {
 		scanfile(file+"/"+hdr.Name, tmpName, info, *verbose)
 		os.Remove(tmpName)
 	}
+}
+
+func printTable(w io.Writer, prefix string, rows [][]string) {
+	var max []int
+	for _, row := range rows {
+		for i, c := range row {
+			n := utf8.RuneCountInString(c)
+			if i >= len(max) {
+				max = append(max, n)
+			} else if max[i] < n {
+				max[i] = n
+			}
+		}
+	}
+
+	b := bufio.NewWriter(w)
+	for _, row := range rows {
+		b.WriteString(prefix)
+		for len(row) > 0 && row[len(row)-1] == "" {
+			row = row[:len(row)-1]
+		}
+		for i, c := range row {
+			b.WriteString(c)
+			if i+1 < len(row) {
+				for j := utf8.RuneCountInString(c); j < max[i]+2; j++ {
+					b.WriteRune(' ')
+				}
+			}
+		}
+		b.WriteRune('\n')
+	}
+	b.Flush()
 }
