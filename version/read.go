@@ -73,7 +73,7 @@ func ReadExe(file string) (Version, error) {
 		}
 	}
 
-	if *debugMatch {
+	if DebugMatch {
 		v.Release = ""
 	}
 	if err := findModuleInfo(&v, f); err != nil {

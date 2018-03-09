@@ -249,6 +249,18 @@ func (x *machoExe) Close() error {
 }
 
 func (x *machoExe) Entry() uint64 {
+	for _, load := range x.f.Loads {
+		b, ok := load.(macho.LoadBytes)
+		if !ok {
+			continue
+		}
+		bo := x.f.ByteOrder
+		const x86_THREAD_STATE64 = 4
+		cmd, siz := macho.LoadCmd(bo.Uint32(b[0:4])), bo.Uint32(b[4:8])
+		if cmd == macho.LoadCmdUnixThread && siz == 184 && bo.Uint32(b[8:12]) == x86_THREAD_STATE64 {
+			return bo.Uint64(b[144:])
+		}
+	}
 	return 0
 }
 

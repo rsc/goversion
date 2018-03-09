@@ -70,6 +70,10 @@ var (
 	verbose = flag.Bool("v", false, "print verbose information")
 )
 
+func init() {
+	flag.BoolVar(&version.DebugMatch, "d", version.DebugMatch, "print debug information")
+}
+
 func usage() {
 	fmt.Fprintf(os.Stderr, "usage: goversion [-crypto] [-v] path...\n")
 	flag.PrintDefaults()
