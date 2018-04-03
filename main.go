@@ -57,6 +57,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"unicode/utf8"
 
@@ -112,6 +113,13 @@ func scandir(dir string) {
 	})
 }
 
+func isExe(file string, info os.FileInfo) bool {
+	if runtime.GOOS == "windows" {
+		return strings.HasSuffix(strings.ToLower(file), ".exe")
+	}
+	return info.Mode()&0111 != 0
+}
+
 func scanfile(file, diskFile string, info os.FileInfo, mustPrint bool) {
 	if strings.HasSuffix(file, ".tar") {
 		if file != diskFile {
@@ -146,7 +154,7 @@ func scanfile(file, diskFile string, info os.FileInfo, mustPrint bool) {
 		}
 		info = i
 	}
-	if file == diskFile && info.Mode()&0111 == 0 {
+	if file == diskFile && !isExe(file, info) {
 		if mustPrint {
 			fmt.Fprintf(os.Stderr, "%s: not executable\n", file)
 		}
