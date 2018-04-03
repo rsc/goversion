@@ -225,6 +225,18 @@ var amd64Matcher = matcher{
 		//	mov %rax, ADDR(%rip)
 		0x48, 0x85, 0xc0, 0x75, pWild, 0x48, 0x8d, 0x05, pWild, pWild, pWild, pWild, 0x48, 0x89, 0x05, pWild | pAddr, pWild, pWild, pWild | pEnd,
 	},
+	{opDone,
+		// schedinit (toward end)
+		//	mov ADDR(%rip), %rcx
+		//	test %rcx, %rcx
+		//	jne <short>
+		//	movq $0x7, ADDR(%rip)
+		//
+		0x48, 0x8b, 0x0d, pWild, pWild, pWild, pWild,
+		0x48, 0x85, 0xc9,
+		0x75, pWild,
+		0x48, 0xc7, 0x05 | pEnd, pWild | pAddr, pWild, pWild, pWild, 0x07, 0x00, 0x00, 0x00,
+	},
 }
 
 var DebugMatch bool
