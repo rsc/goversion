@@ -101,6 +101,11 @@ var amd64Matcher = matcher{
 		0xb8, pWild | pAddr, pWild, pWild, pWild,
 		0xff, 0xe0,
 	},
+	{opMaybe | opAnchor,
+		// main:
+		//	JMP runtime.rt0_go(SB)
+		0xe9, pWild | pAddr, pWild, pWild, pWild | pEnd, 0xcc, 0xcc, 0xcc,
+	},
 	{opMust | opAnchor,
 		// rt0_go:
 		//	mov %rdi, %rax
